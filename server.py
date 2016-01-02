@@ -9,35 +9,82 @@ import time
 import threading
 import random
 
+
 class csStat(object):
 	def __init__(self, stat = 0, name = None):
 		self.stat = stat
 		self.name = name
 		self.room = None
 		self.logTime = 0
+		self.game = 0
+
+	def resetGame(self):
+		self.game = 0
 
 	def clear(self):
 		self.stat = 0
 		self.name = None
 		self.room = None
 		self.logTime = 0
+		self.resetGame()
+
+class roomStat(object):
+	def __init__(self, numList =  [0,0,0,0], strnum = '0000'):
+		self.numList = numList
+		self.strnum = strnum
+		self.winnerName = None
+		self.winnerTime = 20
+		self.winnerPoint = 0
+		
+	def clear(self):
+		self.numList = [0,0,0,0]
+		self.strnum = ''
+		self.winnerName = None
+		self.winnerTime = 20
+		self.winnerPoint = 0
 
 class pyChatServer(object):
 	file = 'data.pkl'
 
+	def gameOver(self):
+		print '21 Game Over'
+		self.isGame = 0
+		self.gameBT = 0
+		for r in self.roomdict:
+			self.sendtoRoom(None, r, '21 Game Over')
+			
+			if self.roomdict[r].winnerName != None:
+				tmp = 'Winner: %s Pt: %s Sec:%s'%(self.roomdict[r].winnerName, self.roomdict[r].winnerPoint, self.roomdict[r].winnerTime)
+				self.sendtoRoom(None, r, tmp)
+			else:
+				self.sendtoRoom(None, r, 'No Winner')
+			self.roomdict[r].clear()
+
+		for each in self.cdict:
+			self.cdict[each].resetGame()
+
 	def randomNum(self):
 		numnum = 4
+		num = []
 		s = ''
 		for i in range(numnum):
-			s += '%s '% random.randint(1,10)
-		return s
+			r = random.randint(1,10)
+			s += '%s '% r
+			num.append(r)
+		return s, num
 
 	def game(self):
-		print '21 game start'
-		for r in self.roomlist:
-			num = self.randomNum()
-			self.sendtoRoom(None, r, num)
-
+		print '21 Game Begin'
+		t = threading.Timer(15, self.gameOver,())
+		for r in self.roomdict:
+			snum, n = self.randomNum()
+			self.roomdict[r] = roomStat(n, snum)
+			self.isGame = 1
+			self.gameBT = time.time()
+			print '21Game Room %s %s'%(r, n)
+			snum = '21 Game Begin: ' + snum
+			self.sendtoRoom(None, r, snum)
+		t.start()
 
 	def startGameByInput(self):
 		while True:
@@ -58,8 +105,11 @@ class pyChatServer(object):
 
 		self.cdict = {}
 
+		self.isGame = 0
+		self.gameBT = 0
+
 		self.usrdict = {}
-		self.roomlist = []
+		self.roomdict = {}
 		self.loadUsr()
 		
 		print 'Run server...'
@@ -94,7 +144,7 @@ class pyChatServer(object):
 
 	def addName(self, name, password = 666):
 		tmp = [password, 0]
-		self.usrdict[name] = tmp
+		self.usrdict[name] = [tmp]
 		self.storeUsr()
 		
 	def delName(self, name):
@@ -120,11 +170,17 @@ class pyChatServer(object):
 		else:
 			self.delcdict(sock)
 		
-	def send(self, sock, strData, sys = 0):
+	def send(self, sock, strData, sys = 0, roomNum = 0):
 		if len(strData) == 0 or strData[-1] != '\n':
 			strData += '\n'
-	
-		strData = strData 
+		if sys == 0:
+			strData = '[pub]' + strData
+		elif sys == 1:
+			 strData = '[sys]' + strData
+		elif sys == 2:
+			 strData = '[room ' + str(roomNum) + ']' + strData
+		elif sys == 3:
+			 strData = '[secret]' + strData
 		try:			
 			sock.send(strData)
 		except:
@@ -183,7 +239,7 @@ class pyChatServer(object):
 				self.cdict[sock].stat = 2
 			else:
 				self.send(sock, 'Please enter 1 or 2\n', 1)
-				self.send(sock, '1-signin\n2-signup\n', 1)
+				self.sendSign(sock)
 
 		elif self.cdict[sock].stat == 1:
 			if self.checkName(data):
@@ -197,7 +253,7 @@ class pyChatServer(object):
 			if self.checkPassword(self.cdict[sock].name, data):
 				if self.checkOnline(self.cdict[sock].name):
 					self.send(sock, '%s is already online\n' % self.cdict[sock].name, 1)
-					self.send(sock, '\n1-signin\n2-signup\n', 1)
+					self.sendSign(sock)
 					self.cdict[sock].clear()
 				else:
 					self.cdict[sock].stat = 10
@@ -233,7 +289,16 @@ class pyChatServer(object):
 			self.command(sock, data)
 
 	def sendHelp(self, sock):
-		tmp = 'help:\n'
+		whitespaceNum = 10
+		tmp = 'Command:\n'
+		tmp += '--all' + ' '*(whitespaceNum + 1) +'#send mesg to all\n'
+		tmp += '--[name]' + ' '*(whitespaceNum -2) +'#send mesg to user [name]\n'
+		tmp += '--time' + ' '*whitespaceNum +'#display your total online time\n'
+		tmp += '--user' + ' '*whitespaceNum +'#display all online user\n'
+		tmp += '--room' + ' '*whitespaceNum +'#display all room\n'
+		tmp += '--room [num]' + ' '*(whitespaceNum - 6)+'#enter room [num], sample: --room 1\n'
+		tmp += '--newroom [num]' + ' '*(whitespaceNum - 9)+'#create room num and then enter, sample: --newroom 1\n'
+		tmp += '--exitroom' + ' '*(whitespaceNum - 4) +'#exit current room\n'
 		self.send(sock, tmp, 1)
 
 	def sendtime(self, sock, name):
@@ -244,27 +309,31 @@ class pyChatServer(object):
 		tmp = '%s Online Time: %fs'%(name, t)
 		self.send(sock, tmp, 1)
 
-	def getRoomList(self):
-		return self.roomlist
+	def getRoomDict(self):
+		return self.roomdict
 
 	def addRoom(self, num):
-		self.roomlist.append(num)
+		self.roomdict[num] = roomStat()
 
 	def sendroom(self, sock):
-		if len(self.getRoomList()) == 0:
+
+		room = self.getRoomDict()
+		if len(room) == 0:
 			tmp = 'No room'
 		else:
-			tmp = str(self.getRoomList())[1:-1]
+			tmp = ''
+			for each in room:
+				tmp += '%s\t'%each
 		self.send(sock, tmp, 1)
 
 	def sendRequstHelp(self, sock):
-		self.send(sock, 'Incorrent command\nInput --help for help\n', 1)
+		self.send(sock, 'Incorrent command\nInput \'--help\' for help\n', 1)
 
 	def sendOnlineUsr(self, sock):
 		tmp = ''
 		for each in self.cdict:
-			tmp += '--%s\n'%self.cdict[each].name
-		self.send(sock, tmp)
+			tmp += '--%s\t'%self.cdict[each].name
+		self.send(sock, tmp, 1)
 
 	
 
@@ -284,8 +353,9 @@ class pyChatServer(object):
 				self.sendOnlineUsr(sock)
 			elif data.lower() == '--exitroom':
 				if self.cdict[sock].room == None:
-					self.sendRequstHelp(sock)
+					self.send(sock, 'You are Not in room',1)
 				else:
+					self.send(sock, 'Exit room %s\n' % self.cdict[sock].room, 1)
 					self.cdict[sock].room = None
 			else:
 				comm = data.split(None, 1)
@@ -297,7 +367,7 @@ class pyChatServer(object):
 						self.sendRequstHelp(sock)
 						return
 		
-					if roomNum in self.getRoomList():
+					if roomNum in self.getRoomDict():
 						self.send(sock, 'Welcome to room %s\n' % roomNum, 1)
 						self.cdict[sock].room = roomNum
 					else:
@@ -311,7 +381,7 @@ class pyChatServer(object):
 						self.sendRequstHelp(sock)
 						return
 
-					if roomNum in self.getRoomList():
+					if roomNum in self.getRoomDict():
 						self.send(sock, 'Room %s exsits\n' % roomNum, 1)
 						
 					else:
@@ -322,30 +392,72 @@ class pyChatServer(object):
 				elif comm[0].lower() == '--all':
 					data = comm[1]
 					data = str(self.cdict[sock].name) + ':' + data			
-					self.sendAll(sock, data)
+					self.sendAll(sock, data, 0)
 				elif comm[0].startswith('--'):
 					iname = comm[0][2:]
 					cs =  self.checkOnline(iname)
 					if cs:
 						data = str(self.cdict[sock].name) + ':' + comm[1]
-						self.send(cs, data)
+						self.send(cs, data, 3)
 					else:
 						self.sendRequstHelp(sock)
 				else:
 					self.sendRequstHelp(sock)
 
 		else:#not start with '--'
-			data = str(self.cdict[sock].name) + ':' + data
-			if self.cdict[sock].room == None:
-				self.sendAll(sock, data)
+			
+			room = self.cdict[sock].room 
+			if room == None:
+				data = str(self.cdict[sock].name) + ':' + data
+				self.sendAll(sock, data, 0)
 			else:
-				self.sendtoRoom(sock, self.cdict[sock].room, data)
+				gamecomm = '21game'
+				if data.startswith(gamecomm) and self.isGame == 1:
+					t = time.time() - self.gameBT
+					if t > 15:
+						self.send(sock, 'Time out',1)
+					else:
+						num = self.cal(data[len(gamecomm):], self.roomdict[room].strnum)
+						
+						if num == None:
+							self.send(sock, 'Incorrent expression',1)
+						else:
+							if self.cdict[sock].game:
+								self.send(sock, 'You have submitted', 1)
+							else:
+								print 'Room %s Name:%s Pt:%s Sec:%s'%(room, self.cdict[sock].name, num, t)
+								self.cdict[sock].game = 1
+								tmp = '%s Pt:%s Sec:%s'%(self.cdict[sock].name, num, t)
+								self.send(sock, tmp, 1)
+								if num <=21 and num >= self.roomdict[room].winnerPoint and t < self.roomdict[room].winnerTime:
+									self.roomdict[room].winnerPoint = num
+									self.roomdict[room].winnerTime = t
+									self.roomdict[room].winnerName = self.cdict[sock].name
+											
+				else:
+					data = str(self.cdict[sock].name) + ':' + data
+					self.sendtoRoom(sock, room, data)
 				
-	def sendtoRoom(self, sock, roomNum, data, sys = 1):
+	def cal(self, s, strnum):
+		mark = '+-*/()'
+		space = ' \t\n'
+
+		s = s.strip()
+		for each in s:
+			if each not in space and each not in mark and each not in strnum:
+				return None
+		try:
+			return eval(s)
+		except:
+			return None
+
+	def sendtoRoom(self, sock, roomNum, data, sys = 2):
 		for cs in self.cdict:
 			if cs != sock and self.cdict[cs].stat == 10 and self.cdict[cs].room == roomNum:
-				self.send(cs, data, sys)
+				self.send(cs, data, sys, roomNum)
 
+	def sendSign(self,sock):
+		self.send(sock, '1-signin\n[sys]2-signup\n', 1)
 
 	def runServer(self):
 
@@ -359,7 +471,7 @@ class pyChatServer(object):
 					newsock, addr = sock.accept()
 					cstat = csStat()
 					self.cdict[newsock] = cstat
-					self.send(newsock, '1-signin\n2-signup\n', 1)
+					self.sendSign(newsock)
 					self.slist.append(newsock)
 					print 'New csock connect' + str(addr)
 				else:
