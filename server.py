@@ -8,6 +8,7 @@ import pickle
 import time
 import threading
 import random
+import datetime
 
 
 class csStat(object):
@@ -45,6 +46,7 @@ class roomStat(object):
 
 class pyChatServer(object):
 	file = 'data.pkl'
+	isGame = 0
 
 	def gameOver(self):
 		print '21 Game Over'
@@ -73,26 +75,55 @@ class pyChatServer(object):
 			num.append(r)
 		return s, num
 
-	def game(self):
-		print '21 Game Begin'
+	def game(self, minute = -1):
+
+		if self.isGame == 1:
+			print 'Game already start.'
+			return
+		self.isGame = 1 
+		if minute != -1:
+			print 'Minute %s 21 Game Begin' % minute
+		else:
+			print '21 Game Begin'
 		t = threading.Timer(15, self.gameOver,())
 		for r in self.roomdict:
 			snum, n = self.randomNum()
 			self.roomdict[r] = roomStat(n, snum)
-			self.isGame = 1
+			
 			self.gameBT = time.time()
 			print '21Game Room %s %s'%(r, n)
 			snum = '21 Game Begin: ' + snum
 			self.sendtoRoom(None, r, snum)
 		t.start()
 
+		if minute != -1:
+			self.countTime()
+
+	def countTime(self, minute = 30):
+		curMinute = datetime.datetime.now().minute
+		curSecond = datetime.datetime.now().second
+
+		deltaSec = 0
+
+		if curMinute > minute or (curMinute == minute and curSecond != 0):
+			deltaSec += (60 - curMinute + minute - 1) * 60
+			deltaSec += 60 - curSecond
+		elif curMinute < minute:
+			deltaSec += (minute - curMinute - 1) *60
+			deltaSec += 60 - curSecond
+
+		t = threading.Timer(deltaSec, self.game,(minute,))
+		t.start()
+
 	def startGameByInput(self):
+		
+		self.countTime(self.min)
 		while True:
 			s = raw_input('>')
 			if s.strip().lower() == 'game':
 				self.game()
 
-	def __init__(self, host, port, lNum = 5):
+	def __init__(self, host, port, min = 30,lNum = 5):
 		'''
 		init server socket
 		'''
@@ -111,6 +142,8 @@ class pyChatServer(object):
 		self.usrdict = {}
 		self.roomdict = {}
 		self.loadUsr()
+
+		self.min = min
 		
 		print 'Run server...'
 		self.runServer()
@@ -444,8 +477,14 @@ class pyChatServer(object):
 
 		s = s.strip()
 		for each in s:
-			if each not in space and each not in mark and each not in strnum:
-				return None
+			if each not in space and each not in mark:
+				if each not in strnum:
+					return None
+				else:
+					index = strnum.find(each)
+					if index == -1:
+						return None
+					strnum = strnum[:index] + strnum[index+1:]
 		try:
 			return eval(s)
 		except:
@@ -486,5 +525,5 @@ class pyChatServer(object):
 			
 
 if __name__ == '__main__':
-	s = pyChatServer(socket.gethostname(), 1234)
+	s = pyChatServer(socket.gethostname(), 1234, 18)
 
