@@ -59,4 +59,8 @@ class pyChatClient():
 					print 'send failed'
 
 if __name__ == '__main__':
-	c = pyChatClient(socket.gethostname(), 1234)
+	#host = '223.3.77.15'
+	port = 1234
+	host = raw_input('Please input server ip:')
+	print 'server port is 1234 by default'
+	c = pyChatClient(host, port)

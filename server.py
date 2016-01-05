@@ -10,6 +10,7 @@ import threading
 import random
 import datetime
 
+debug = 0
 
 class csStat(object):
 	def __init__(self, stat = 0, name = None):
@@ -131,7 +132,7 @@ class pyChatServer(object):
 		time.sleep(1)
 
 		if minute != -1: #time out
-			print 'M%s 21 Game Begin' % minute
+			print '21 Game Begin'
 		else: #command start game
 			print '21Game Begin'
 
@@ -154,7 +155,6 @@ class pyChatServer(object):
 
 	def countTime(self, minute = 30):
 		'''start timer for game
-		argu minute indicate the minute to begin game every hour
 		'''
 		curTime = datetime.datetime.now() #get current time
 		curMinute = curTime.minute 
@@ -163,9 +163,9 @@ class pyChatServer(object):
 		deltaSec = 0 #delta second till next game
 
 		if curMinute > minute or (curMinute == minute and curSecond != 0): #wait >= minute
-			deltaSec += (60 - curMinute + minute - 1) * 60
+			deltaSec += (60 - curMinute - 1) * 60
 			deltaSec += 60 - curSecond
-		elif curMinute < minute: #wait < minute
+		elif curMinute < minute or (curMinute == 0 and curSecond != 0): #wait < minute
 			deltaSec += (minute - curMinute - 1) *60
 			deltaSec += 60 - curSecond
 
@@ -183,7 +183,7 @@ class pyChatServer(object):
 			if s.strip().lower() == 'game':
 				self.game()
 
-	def __init__(self, host, port, min = 30,lNum = 5):
+	def __init__(self, host, port, lNum = 5):
 		'''chat server class
 		agru host:port, min for game start minute every hour, listen num
 		'''
@@ -212,7 +212,7 @@ class pyChatServer(object):
 
 		self.loadUsr() #load user info from file
 
-		self.min = min #game start minute every hour
+		self.min = 30 #game start minute every hour
 		
 		print 'Server Run...'
 		self.runServer()
@@ -246,13 +246,19 @@ class pyChatServer(object):
 		try:
 			f = open(self.file)
 		except IOError:
+			self.usrdict = {}
+			self.usrdict['netease1'] = ['123',0]
+			self.usrdict['netease2'] = ['123',0]
+			self.usrdict['netease3'] = ['123',0]
+			self.usrdict['netease4'] = ['123',0]
+			
 			self.storeUsr()
 			f = open(self.file)
 
 		self.usrdict = pickle.load(f)
 		f.close()
 
-	def addName(self, name, password = 1234):
+	def addName(self, name, password = '123'):
 		'''add a user name to memory and disk
 		'''
 		tmp = [password, 0]
@@ -271,13 +277,23 @@ class pyChatServer(object):
 		self.usrdict[name][0] = password
 		self.storeUsr()
 
-	def cutTail(self, str):
+	def cutTail(self, s):
 		'''cut recv string tail '\n'
 		'''
-		if str[-1] == '\n':
-			return str[:-1]
+		if len(s) == 0:
+			return s
+		elif len(s) >= 2:
+			if s[-2:] == '\r\n': #spe for linux telnet
+				return s[:-2]
+			elif s[-1] == '\n':
+				return s[:-1]
+			else:
+				return s
 		else:
-			return str
+			if s[-1] == '\n':
+				return s[:-1]
+			else:
+				return s
 
 	def sendFail(self, sock):
 		'''called when client socket disconnected or error
@@ -329,7 +345,7 @@ class pyChatServer(object):
 		self.sendAll(sock, '%s is online\n' % name, 1)
 		self.send(sock, 'Welcome %s' % name, 1)
 
-	def offline(self, sock):
+	def offline(self, sock, flag = 1):
 		'''calledn when user offline
 		'''
 		name = self.cdict[sock].name
@@ -340,6 +356,11 @@ class pyChatServer(object):
 
 		self.sendAll(sock, '%s is offline\n' % name, 1)
 		self.delcdict(sock)
+		if flag != 1:
+			self.send(sock, 'You are Offline\n', 1)
+			csstat = csStat()
+			self.cdict[sock] = csstat
+			self.sendSign(sock)
 
 	def delcdict(self, sock):
 		del self.cdict[sock]
@@ -451,6 +472,7 @@ class pyChatServer(object):
 		tmp += '--room [num]' + ' '*(whitespaceNum - 6)+'#enter room [num], sample: --room 1\n'
 		tmp += '--newroom [num]' + ' '*(whitespaceNum - 9)+'#create room num and then enter, sample: --newroom 1\n'
 		tmp += '--exitroom' + ' '*(whitespaceNum - 4) +'#exit current room\n'
+		tmp += '--offline' + ' '* (whitespaceNum - 3) + '#offline'
 		self.send(sock, tmp, 1)
 
 	def sendtime(self, sock, name):
@@ -515,7 +537,9 @@ class pyChatServer(object):
 					self.send(sock, 'You are Not in any room',1)
 				else:
 					self.cdict[sock].room = None
-					self.send(sock, 'Exit room %s\n' % self.cdict[sock].room, 1)					
+					self.send(sock, 'Exit room %s\n' % self.cdict[sock].room, 1)	
+			elif data.lower() == '--offline':
+				self.offline(sock, 0)			
 			else:
 				comm = data.split(None, 1) #cut data into 2 slices
 				if comm[0].lower() == '--room':
@@ -655,8 +679,15 @@ class pyChatServer(object):
 				else:
 					try:
 						revData = sock.recv(self.revBuf)
+						if debug:
+							print `revData`
 						if revData:
-							self.charge(sock, revData) #handle revdata
+							self.charge(sock, self.cutTail(revData)) #handle revdata
+						else: #spe for linux telnet 
+							print 'revData empty'
+							self.sendFail(sock)
+							sock.close()
+							self.slist.remove(sock)
    					except:
 						self.sendFail(sock)
 						sock.close()
@@ -664,8 +695,7 @@ class pyChatServer(object):
 			
 
 if __name__ == '__main__':
-	gameTriggerMinute = 30
-	host = socket.gethostname()
+	host = socket.gethostbyname(socket.gethostname())
 	port = 1234
-	s = pyChatServer(host, port, gameTriggerMinute)
+	s = pyChatServer(host, port)
 
